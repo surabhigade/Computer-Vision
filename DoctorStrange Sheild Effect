@@ -1,0 +1,116 @@
+"""
+Name: Surabhi Gade
+Description: Below code is a program that uses a webcam to track hands and overlays a video clip (a shield image) when two hands come close together
+"""
+
+import cv2
+import math
+from cvzone.HandTrackingModule import HandDetector
+
+# Create a HandDetector object to detect hands.
+detector = HandDetector()
+
+# Start capturing video from the webcam
+cap = cv2.VideoCapture(0)
+
+if not cap.isOpened():
+    print("Error: Could not open video.")
+    exit()
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+
+
+# Create VideoWriter object for saving video as .mp4
+fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Set codec for .mp4
+out = cv2.VideoWriter('output.mp4', fourcc, 20.0, (1280, 720))
+
+# Capture the shield video
+shield = cv2.VideoCapture("shield.mp4")
+
+
+# Function to map a value from one range to another( linear interpolation)
+def mapFromTo(x, x1, x2, y1, y2):
+    return (x - x1) / (x2 - x1) * (y1 - y2) + y1
+
+
+# Function to overlay an image on a background
+"""
+Parameters:
+background: The main image (or frame) onto which the overlay will be applied.
+overlay: The image that will be overlaid on the background (e.g., a shield image).
+x: The x-coordinate (horizontal position) where the center of the overlay will be placed.
+y: The y-coordinate (vertical position) where the center of the overlay will be placed.
+size: A parameter that influences the scaling of the overlay image based on the size of the object (like a hand) it is being associated with.
+"""
+def Overlay (background, overlay, x, y, size):
+    background_h, background_w, c = background.shape
+    imgScale = mapFromTo(size, 200, 20, 1.5, 0.2)
+    overlay = cv2.resize(overlay, (0, 0), fx=imgScale, fy=imgScale)
+    h, w, c = overlay.shape
+    try:
+        if x + w/2 >= background_w or y + h/2 >= background_h or x - w/2 <= 0 or y - h/2 <= 0:
+            return background
+        else:
+            overlayImage = overlay[..., :3]
+            mask = overlay / 255.0
+            background[int(y-h/2):int(y+h/2), int(x-w/2):int(x+w/2)] = (1-mask)*background[int(y-h/2):int(y+h/2), int(x-w/2):int(x+w/2)] + overlay
+            return background
+    except:
+        return background
+    
+# Function to calculate the distance between two points
+def findDistance(point1, point2):
+    return math.sqrt((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2)
+
+
+showfield = True
+changetimer = 0
+
+while True:
+    success, img = cap.read()
+    if not success:
+        print("Error: Could not read frame.")
+        break
+
+    hands = detector.findHands(img, False)
+    final = img.copy()
+
+    if hands[0]:
+        hand_list = hands[0]
+        success, shieldImage = shield.read()
+        
+        if not success:
+            shield.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            success, shieldImage = shield.read()
+
+        if shieldImage is not None:
+            if len(hand_list) == 2:  # When there are two hands
+                changetimer += 1
+                if "lmList" in hand_list[0] and "lmList" in hand_list[1]:
+                    if len(hand_list[0]["lmList"]) > 9 and len(hand_list[1]["lmList"]) > 9:
+                        distance = findDistance(hand_list[0]["lmList"][9], hand_list[1]["lmList"][9])
+                        if distance < 30:
+                            if changetimer > 100:
+                                showfield = not showfield
+                                changetimer = 0
+
+
+            # Apply overlay based on field display status
+            for hand in hand_list:
+                if "lmList" in hand:  # Check if 'lmList' exists
+                    bbox = hand["bbox"]
+                    handsize = bbox[2]
+                    cx, cy = hand["center"]
+                    if 1 in detector.fingersUp(hand):
+                        if showfield:
+                            final = Overlay(final, shieldImage, cx, cy, handsize)
+
+    out.write(final)  # Save the current frame to video file
+    cv2.imshow("Doctor Strange", cv2.flip(final, 1))
+    if cv2.waitKey(2) & 0xFF == ord('q'):
+        break
+
+# Release resources
+cap.release()
+shield.release()
+cv2.destroyAllWindows()
